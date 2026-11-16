@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>QrPrinter.MockServer</RootNamespace>
+    <AssemblyName>QrPrinterMockServer</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Again, no PackageReference: the ASP.NET shared framework is already on
+         the box, so this restores nothing and a new person can run it with only
+         the .NET SDK installed. -->
+  </PropertyGroup>
+
+</Project>

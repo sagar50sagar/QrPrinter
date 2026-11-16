@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>QrFakePrinter</RootNamespace>
+    <AssemblyName>QrFakePrinter</AssemblyName>
+    <Version>0.1.0</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <RollForward>Major</RollForward>
+    <!-- No PackageReference on purpose: a raw socket, a file stream and the
+         console are all BCL (System.Net.Sockets ships in the shared
+         framework), so this bench tool builds and runs with nothing
+         downloaded and nothing third-party to explain to an anti-virus
+         analyst. -->
+    <PublishSelfContained Condition="'$(RuntimeIdentifier)' != ''">true</PublishSelfContained>
+    <AssemblyTitle>QrFakePrinter bench listener</AssemblyTitle>
+    <Product>QrFakePrinter bench listener</Product>
+    <!-- Nothing here needs culture rules: the output is ASCII job summaries
+         and invariant-culture numbers, so the tool stays small and boots
+         without the ICU pack on a lean shop machine. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

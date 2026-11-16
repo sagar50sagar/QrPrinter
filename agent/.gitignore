@@ -1,0 +1,8 @@
+bin/
+obj/
+dist/
+# Fetched by agent/tools/get-sumatra.ps1, not source.
+vendor/
+bench-logs/
+*.user
+TestResults/

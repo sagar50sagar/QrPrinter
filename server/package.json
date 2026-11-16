@@ -1,0 +1,23 @@
+{
+  "name": "qrprinter-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "QrPrinter product server: shop accounts, orders, the customer upload page and the agent channel.",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "bootstrap": "node scripts/bootstrap.js",
+    "migrate": "node scripts/migrate.js",
+    "seed:admin": "node scripts/seed-admin.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "multer": "^2.0.1",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.13.1",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  }
+}

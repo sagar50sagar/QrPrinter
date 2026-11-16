@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net10.0 is the current LTS. .NET 8 goes out of support on 2026-11-10,
+         which is a week away, so an agent installed in a shop should not start
+         its life on a runtime that is about to stop receiving patches. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>QrPrinter.Agent</RootNamespace>
+    <AssemblyName>QrPrinterAgent</AssemblyName>
+    <Version>0.1.0</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <RollForward>Major</RollForward>
+    <!-- No PackageReference on purpose: everything is BCL plus winspool.drv, so a
+         build needs nothing downloaded and the shipped folder has no third-party
+         runtime to explain to an anti-virus analyst. -->
+    <PublishSelfContained Condition="'$(RuntimeIdentifier)' != ''">true</PublishSelfContained>
+    <AssemblyTitle>QrPrinter Local Agent</AssemblyTitle>
+    <Product>QrPrinter Local Agent</Product>
+    <Company>$(Company)</Company>
+    <Copyright>Copyright © $(Company)</Copyright>
+    <!-- Printer names, file paths and Win32 messages want real culture rules. -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The test project is a plain console runner with no framework, and the
+         parts worth testing (the wire contract, the job-id path guard) are
+         internal. Friend access is cheaper than making them public. -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>QrPrinter.Agent.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

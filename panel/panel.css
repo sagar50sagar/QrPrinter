@@ -1,0 +1,26 @@
+/* Panel-only rules. The colours, radii and shadows all come from
+   src/index.css, which is the same token file the marketing page uses, so a
+   shop that gets a rebrand gets it on both surfaces at once.
+   Plain CSS on purpose: Tailwind's own entry lives in index.css and must not
+   be pulled in twice. */
+
+/* Money, page counts and job ids line up in columns only when digits are the
+   same width. */
+.panel-numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* The table head stays visible while the counter scrolls through a long list. */
+.panel-sticky-head thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--color-canvas);
+}
+
+@media print {
+  .panel-no-print {
+    display: none !important;
+  }
+}

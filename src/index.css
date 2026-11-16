@@ -1,0 +1,301 @@
+@import "tailwindcss";
+
+/* Class-based theming: .dark on <html>, set before first paint by the inline
+   script in index.html so there is no flash of the wrong theme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------ *
+ * Design tokens — one place to change colour, type, radius or shadow.
+ *
+ * Rules:
+ *  - Roles that must flip between themes (surface, ink, line, soft chips…)
+ *    are semantic tokens, overridden once in .dark.
+ *  - Raw scales (navy-*, accent-*) are for brand-dark bands and fixed-colour
+ *    artwork, and stay identical in both themes.
+ * ------------------------------------------------------------------ */
+@theme {
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+
+  /* Deep navy — brand darks, headings, footer bands */
+  --color-navy-50: #f4f7fb;
+  --color-navy-100: #e6ecf5;
+  --color-navy-200: #c9d6e8;
+  --color-navy-300: #9fb3d1;
+  --color-navy-400: #6d88b0;
+  --color-navy-500: #4a6693;
+  --color-navy-600: #35507a;
+  --color-navy-700: #263c5e;
+  --color-navy-800: #1a2c47;
+  --color-navy-900: #0e1c33;
+  --color-navy-950: #071120;
+
+  /* Accent — professional blue. -600 is the AA-safe fill for white text. */
+  --color-accent-50: #eff6ff;
+  --color-accent-100: #dbeafe;
+  --color-accent-200: #bfdbfe;
+  --color-accent-300: #8ec5fd;
+  --color-accent-400: #53a3f7;
+  --color-accent-500: #2b86ee;
+  --color-accent-600: #1566c8;
+  --color-accent-700: #12529f;
+  --color-accent-800: #143f77;
+  --color-accent-900: #14365f;
+
+  /* Semantic surface + text roles */
+  --color-ink: #0e1c33;
+  --color-body: #3d4f66;
+  --color-muted: #5a6b83;
+  --color-line: #e4e9f1;
+  --color-line-strong: #c9d6e8;
+  --color-surface: #ffffff;
+  --color-canvas: #f7f9fc;
+
+  /* Tints used by icon chips, eyebrows and hover backgrounds */
+  --color-soft: #f4f7fb;
+  --color-soft-ink: #263c5e;
+  --color-accent-soft: #eff6ff;
+  --color-accent-text: #12529f;
+
+  /* Brand-dark bands (final CTA, footer) — read as dark in both themes */
+  --color-band: #0e1c33;
+  --color-band-deep: #071120;
+  --color-band-ink: #e6ecf5;
+  --color-band-body: #9fb3d1;
+  --color-band-dim: #6d88b0;
+  --color-band-line: #1a2c47;
+
+  /* Logo artwork */
+  --color-logo-bg: #0e1c33;
+  --color-logo-fg: #ffffff;
+
+  /* Status (used by the dashboard preview only) */
+  --color-success: #0f7a53;
+  --color-success-soft: #e6f5ee;
+  --color-warn: #94620c;
+  --color-warn-soft: #fbf1de;
+  --color-danger: #a93226;
+  --color-danger-soft: #fbebe9;
+
+  --radius-field: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-panel: 1rem;
+
+  --shadow-card:
+    0 1px 2px rgba(7, 17, 32, 0.05), 0 1px 3px rgba(7, 17, 32, 0.04);
+  --shadow-lift:
+    0 6px 18px -8px rgba(7, 17, 32, 0.14), 0 1px 3px rgba(7, 17, 32, 0.06);
+  --shadow-panel:
+    0 30px 60px -30px rgba(7, 17, 32, 0.32), 0 2px 10px rgba(7, 17, 32, 0.06);
+}
+
+/* Dark theme: only the roles flip, every utility keeps working unchanged. */
+.dark {
+  --color-ink: #eef4fc;
+  --color-body: #b6c6db;
+  --color-muted: #8ea3c0;
+  --color-line: #223650;
+  --color-line-strong: #33496a;
+  --color-surface: #0e1a2e;
+  --color-canvas: #080f1d;
+
+  --color-soft: #16263e;
+  --color-soft-ink: #cddff5;
+  --color-accent-soft: #12304f;
+  --color-accent-text: #8ec5fd;
+
+  --color-band: #050b16;
+  --color-band-deep: #02060d;
+  --color-band-ink: #dbe6f5;
+  --color-band-body: #92a9c8;
+  --color-band-dim: #6b80a0;
+  --color-band-line: #16243c;
+
+  --color-logo-bg: #dce8f8;
+  --color-logo-fg: #0e1c33;
+
+  --color-success: #4ec49a;
+  --color-success-soft: #10312a;
+  --color-warn: #e0ae5e;
+  --color-warn-soft: #33280f;
+  --color-danger: #ef8f80;
+  --color-danger-soft: #3a1c1e;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-lift:
+    0 8px 22px -10px rgba(0, 0, 0, 0.7), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-panel:
+    0 30px 60px -30px rgba(0, 0, 0, 0.85), 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+    /* keeps anchored headings clear of the sticky navbar */
+    scroll-padding-top: 5.5rem;
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background-color: var(--color-canvas);
+    color: var(--color-body);
+    line-height: 1.6;
+    font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+    text-rendering: optimizeLegibility;
+    /* `clip` (not `hidden`) so nothing can drift sideways without
+       creating a nested scroll container */
+    overflow-x: clip;
+    transition:
+      background-color 0.25s ease,
+      color 0.25s ease;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--color-ink);
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent-text);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-canvas);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 8px;
+    border: 2px solid var(--color-canvas);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Layout, glass + motion helpers
+ * ------------------------------------------------------------------ */
+@utility container-site {
+  width: 100%;
+  max-width: 76rem;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+
+  @media (min-width: 768px) {
+    padding-inline: 2rem;
+  }
+}
+
+/* Translucent surfaces. Used for the sticky navbar, the mobile sheet, the
+   floating hero chip and the featured pricing card — not splashed over the
+   whole page, so the blur stays cheap and the text keeps its contrast. */
+@utility glass {
+  background-color: color-mix(in oklab, var(--color-surface) 72%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+}
+
+@utility glass-strong {
+  background-color: color-mix(in oklab, var(--color-surface) 58%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  backdrop-filter: blur(20px) saturate(170%);
+}
+
+@utility glass-on-band {
+  background-color: color-mix(in oklab, var(--color-navy-700) 55%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
+}
+
+/* No backdrop-filter (old Firefox/Safari, or a GPU-restricted shop machine):
+   fall back to a solid panel so text never sits on bare content.
+   Un-layered, so it outranks the @utility rules above. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-strong {
+    background-color: var(--color-surface);
+  }
+  .glass-on-band {
+    background-color: var(--color-navy-800);
+  }
+}
+
+@utility text-hero {
+  font-size: clamp(2rem, 1.35rem + 2.6vw, 3.125rem);
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.12;
+}
+
+@utility text-section {
+  font-size: clamp(1.5rem, 1.24rem + 1.1vw, 2.125rem);
+  font-weight: 700;
+  letter-spacing: -0.018em;
+  line-height: 1.2;
+}
+
+@layer components {
+  /* Scroll reveal. Applied by <Reveal/>; inert when JS is off. */
+  .reveal {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+    transition:
+      opacity 0.55s ease-out,
+      transform 0.55s ease-out;
+    will-change: opacity, transform;
+  }
+
+  .reveal-in {
+    opacity: 1;
+    transform: none;
+    will-change: auto;
+  }
+
+  /* Shared hover lift. Cards add `group`, children react with group-hover. */
+  .hover-lift {
+    transition:
+      transform 0.2s ease-out,
+      border-color 0.2s ease-out,
+      box-shadow 0.2s ease-out,
+      background-color 0.2s ease-out;
+  }
+
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .hover-lift:hover {
+      transform: translateY(-3px);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

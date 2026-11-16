@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cyber cafe panel</title>
+    <meta name="description" content="Counter panel for a cyber cafe: today's prints, today's payment, printers and job payment status." />
+    <meta name="theme-color" content="#0e1c33" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Same key the marketing page uses, so one choice covers both surfaces. -->
+    <script>
+      (function () {
+        var stored = null
+        try {
+          stored = localStorage.getItem('qp-theme')
+        } catch (e) {}
+        var dark =
+          stored === 'dark' ||
+          (stored !== 'light' &&
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', dark)
+      })()
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="panel-root"></div>
+    <noscript>
+      The counter panel needs JavaScript. Enable it and reload.
+    </noscript>
+    <script type="module" src="./main.jsx"></script>
+  </body>
+</html>

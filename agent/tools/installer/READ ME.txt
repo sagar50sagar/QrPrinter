@@ -1,0 +1,76 @@
+QrPrinter agent - setup for your shop PC
+========================================
+
+This program connects the printers on this computer to your QrPrinter
+counter panel, so customers can upload documents and you can print them.
+
+You need: this PC, your printers already installed on it, and your
+QrPrinter panel open in a browser.
+
+
+HOW TO INSTALL (about two minutes)
+----------------------------------
+
+1. Extract EVERY file from this zip into one folder.
+   Do not run the installer from inside the zip - Windows will not let it
+   copy the files, and setup will fail.
+
+2. Double-click:  Install QrPrinter Agent
+
+3. Windows will ask for administrator permission. Choose Yes.
+   If Windows shows a blue "Windows protected your PC" box, choose
+   "More info" then "Run anyway".
+
+4. When asked for a pairing code:
+     - In your QrPrinter panel, open Settings
+     - Press "Generate pairing code"
+     - Type the 6 characters into the installer window and press Enter
+
+5. Wait for "Done". The agent now starts automatically with this PC.
+
+Your panel should show the device online within a few seconds, and your
+printers will appear under Settings - Reported printers.
+
+
+ENTERING A CODE AFTER SETUP
+---------------------------
+
+Run "Install QrPrinter Agent" again. It asks for a code every time, so you
+can pair this PC again without uninstalling anything. Press Enter at the
+prompt to keep the pairing that is already there.
+
+Do this if you skipped the code, or if the panel shows this PC offline.
+
+By hand, in an administrator PowerShell (ABC234 is your code):
+
+    & "C:\Program Files\QrPrinter Agent\QrPrinterAgent.exe" pair ABC234
+    & "C:\Program Files\QrPrinter Agent\QrPrinterAgent.exe" service restart
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+
+Open PowerShell and run:
+
+    & "C:\Program Files\QrPrinter Agent\QrPrinterAgent.exe" doctor
+
+It checks the printer service, the server connection and the pairing, and
+tells you what is wrong. Send its output to your QrPrinter support contact.
+
+Other useful commands (same folder):
+
+    QrPrinterAgent service status      is it running?
+    QrPrinterAgent printers            what printers can it see?
+    QrPrinterAgent service restart     after changing a pairing code
+
+
+GOOD TO KNOW
+------------
+
+- The code is single-use and expires. Generate a fresh one if it fails.
+- A service only sees printers installed for the whole PC. A printer added
+  for just your Windows user account will not appear - reinstall it for
+  all users.
+- Documents waiting to print are stored under
+  C:\ProgramData\QrPrinter Agent\spool and are removed after printing.
+- Nothing here needs .NET or any other download. Everything is included.
