@@ -40,11 +40,14 @@ function int(name, fallback) {
 
 const publicBaseUrl = (process.env.PUBLIC_BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, '')
 const uploadDir = path.resolve(serverRoot, process.env.UPLOAD_DIR || './var/documents')
+export const isProduction = process.env.NODE_ENV === 'production'
 
 export const config = {
   databaseUrl: required('DATABASE_URL'),
   port: int('PORT', 8787),
-  host: process.env.HOST || '127.0.0.1',
+  // A container platform routes traffic to the container's interface, not to
+  // loopback, so production must bind everywhere unless told otherwise.
+  host: process.env.HOST || (isProduction ? '0.0.0.0' : '127.0.0.1'),
   publicBaseUrl,
   isHttps: publicBaseUrl.startsWith('https://'),
   uploadDir,
@@ -53,6 +56,16 @@ export const config = {
   // A printed document (and its file) is kept this long so the counter and the
   // customer can see "Printed", then purged. Accounting lives on the order.
   printedRetentionMinutes: int('PRINTED_RETENTION_MINUTES', 10),
+  // An order nobody ever paid for keeps its files this long, so a customer can
+  // still settle at the counter later the same day. After that the documents and
+  // files go; the order row stays for the counter's owed totals.
+  unpaidRetentionHours: int('UNPAID_RETENTION_HOURS', 24),
+  // A staged upload with no document row (a request that died mid-upload) is
+  // removed once it is this old, so a slow parse is never mistaken for an orphan.
+  orphanFileMinutes: int('ORPHAN_FILE_MINUTES', 60),
+  // Hops of proxy to trust for X-Forwarded-For. 0 in dev (the socket address is
+  // the client); 1 behind Railway's edge so rate limits see real customer IPs.
+  trustProxy: int('TRUST_PROXY', 0),
   // The agent streams documents with a 64 MB cap; refuse anything larger here
   // so an oversized upload never reaches the shop PC.
   maxDocumentBytes: 64 * 1024 * 1024,

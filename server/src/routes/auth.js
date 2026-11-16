@@ -6,6 +6,7 @@ import { hashPassword, verifyPassword } from '../lib/passwords.js'
 import { email as validateEmail, password as validatePassword, str, slug as validateSlug } from '../lib/validate.js'
 import { badRequest, conflict, forbidden, unauthorized, wrap } from '../lib/errors.js'
 import { createSession, destroySession, requireSession } from '../middleware/session.js'
+import { perHour, rateLimit } from '../middleware/rateLimit.js'
 import { rupees } from '../lib/validate.js'
 
 const router = Router()
@@ -29,7 +30,7 @@ async function uniqueSlug(desired) {
   return candidate
 }
 
-router.post('/signup', wrap(async (req, res) => {
+router.post('/signup', perHour('signup', 5), wrap(async (req, res) => {
   const email = validateEmail(req.body?.email)
   const password = validatePassword(req.body?.password)
   const cafeName = str(req.body?.cafeName, { field: 'cafe name', max: 80, required: true })
@@ -58,7 +59,13 @@ router.post('/signup', wrap(async (req, res) => {
   res.status(201).json({ ok: true, user: publicUser(user), shop: publicShop(shop) })
 }))
 
-router.post('/login', wrap(async (req, res) => {
+// Two buckets: one per IP stops a script hammering the form, one per email stops
+// a distributed guess against a single account from many IPs.
+const loginWindow = { windowMs: 15 * 60_000 }
+router.post('/login',
+  rateLimit({ ...loginWindow, name: 'login-ip', max: 20 }),
+  rateLimit({ ...loginWindow, name: 'login-email', max: 10, key: (req) => String(req.body?.email || '').toLowerCase() }),
+  wrap(async (req, res) => {
   const email = validateEmail(req.body?.email)
   const password = typeof req.body?.password === 'string' ? req.body.password : ''
   const user = await one('SELECT * FROM users WHERE email = $1', [email])

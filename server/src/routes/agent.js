@@ -4,6 +4,7 @@ import { deviceId, deviceToken, sha256Hex } from '../lib/ids.js'
 import { str } from '../lib/validate.js'
 import { unauthorized, wrap } from '../lib/errors.js'
 import { requireDevice } from '../middleware/agentAuth.js'
+import { rateLimit } from '../middleware/rateLimit.js'
 import { heartbeatResponse } from '../lib/wire.js'
 import { offerPending, applyResult } from '../services/queue.js'
 
@@ -14,7 +15,7 @@ const router = Router()
  * burns codes for real (the mock allows reuse on purpose): a code that has been
  * used, expired, or never existed is refused without revealing which.
  */
-router.post('/pair', wrap(async (req, res) => {
+router.post('/pair', rateLimit({ name: 'pair', windowMs: 10 * 60_000, max: 10 }), wrap(async (req, res) => {
   const code = str(req.body?.pairing_code, { field: 'pairing code', max: 32 }).toUpperCase()
   const machineKey = str(req.body?.machine_key, { field: 'machine key', max: 128 })
   const hostname = str(req.body?.hostname, { field: 'hostname', max: 128 })

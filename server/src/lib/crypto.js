@@ -35,6 +35,17 @@ function resolveKey() {
   return cachedKey
 }
 
+/**
+ * On an ephemeral host a generated key file dies with the container, and every
+ * stored shop secret becomes unreadable on the next deploy. Refuse to boot in
+ * that state instead of silently orphaning the shops' Razorpay keys.
+ */
+export function assertDurablePaymentsKey() {
+  if (process.env.PAYMENTS_ENC_KEY || fs.existsSync(KEY_FILE)) return
+  throw new Error('PAYMENTS_ENC_KEY is not set and server/var/payments.key does not exist. '
+    + 'Set PAYMENTS_ENC_KEY (32 bytes, hex or base64) or mount a persistent volume for server/var.')
+}
+
 /** Encrypt a secret for storage. Empty in → empty out (a shop with no keys). */
 export function encryptSecret(plaintext) {
   const text = String(plaintext ?? '')

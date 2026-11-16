@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { config } from '../config.js'
 import { many, one, query, transaction } from '../db.js'
 import { buildOffer, RESULT_STATUSES } from '../lib/wire.js'
@@ -8,6 +10,10 @@ import { deleteStored } from './documents.js'
 export const printerFor = (shop, mode) => (mode === 'color' ? shop.printer_color : shop.printer_bw) || ''
 
 const ACTIVE = ['queued', 'printing']
+
+// Past this many deliveries a silent agent is treated as a failed print rather
+// than retried forever: the job may already have reached the paper.
+const MAX_DELIVERY_ATTEMPTS = 3
 
 /**
  * Queue documents for printing. Payment is enforced here, not only in the UI:
@@ -22,7 +28,7 @@ export async function enqueue(shop, jobIds) {
   if (ids.length === 0) return { sent: 0, sentIds: [], sentBw: 0, sentColor: 0, duplicates, unassigned }
 
   const docs = await many(
-    `SELECT d.*, o.status AS order_status
+    `SELECT d.*, o.status AS order_status, o.reversed_at AS order_reversed_at
      FROM documents d JOIN orders o ON o.id = d.order_id
      WHERE d.shop_id = $1 AND d.id = ANY($2::text[])`,
     [shop.id, ids],
@@ -33,48 +39,66 @@ export async function enqueue(shop, jobIds) {
   for (const id of ids) {
     const doc = byId.get(id)
     if (!doc) continue
-    if (doc.order_status !== 'paid') continue // print is gated on payment
+    if (doc.order_status !== 'paid' || doc.order_reversed_at) continue // print is gated on payment, and on it not being reversed
     if (ACTIVE.includes(doc.print_status) || doc.print_status === 'printed') { duplicates++; continue }
     const printer = printerFor(shop, doc.mode)
     if (!printer) { unassigned[doc.mode]++; continue }
     fresh.push({ ...doc, printer_name: printer })
   }
 
+  const queued = []
   if (fresh.length > 0) {
     await transaction(async (client) => {
       for (const doc of fresh) {
-        await client.query(
+        const { rows } = await client.query(
           `UPDATE documents
            SET print_status = 'queued', printer_name = $2, print_stage = '', print_detail = '',
-               copies_printed = NULL, finished_at = NULL, device_id = NULL, delivered_at = NULL
-           WHERE id = $1`,
+               copies_printed = NULL, finished_at = NULL, device_id = NULL, delivered_at = NULL,
+               print_attempts = 0
+           WHERE id = $1 AND print_status NOT IN ('queued', 'printing', 'printed')
+           RETURNING id`,
           [doc.id, doc.printer_name],
         )
+        if (rows.length > 0) queued.push(doc)
+        else duplicates++
       }
     })
-    dispatch(shop.id, fresh)
+    await dispatch(shop.id, queued)
   }
 
   return {
-    sent: fresh.length,
-    sentIds: fresh.map((d) => d.id),
-    sentBw: fresh.filter((d) => d.mode === 'bw').length,
-    sentColor: fresh.filter((d) => d.mode === 'color').length,
+    sent: queued.length,
+    sentIds: queued.map((d) => d.id),
+    sentBw: queued.filter((d) => d.mode === 'bw').length,
+    sentColor: queued.filter((d) => d.mode === 'color').length,
     duplicates,
     unassigned,
   }
 }
 
+/**
+ * Take a queued job for one device. The guard is the whole point: the websocket
+ * push, the agent's poll and a second counter click all race for the same row,
+ * and only the UPDATE that actually flips queued → printing may deliver it.
+ */
+const CLAIM_SQL = `UPDATE documents
+   SET print_status = 'printing', device_id = $2, delivered_at = now(),
+       print_attempts = print_attempts + 1
+   WHERE id = $1 AND print_status = 'queued'
+   RETURNING id`
+
+async function claim(run, jobId, deviceId) {
+  const { rows } = await run(CLAIM_SQL, [jobId, deviceId])
+  return rows.length > 0
+}
+
 /** Push freshly queued jobs to one connected agent (never two — that double-prints). */
-function dispatch(shopId, docs) {
+async function dispatch(shopId, docs) {
   const [deviceId] = onlineDeviceIds(shopId)
   if (!deviceId) return // no agent online: the poll path will offer these
   for (const doc of docs) {
-    pushToDevice(deviceId, { type: 'job_new', job: buildOffer(doc) })
-    query(
-      `UPDATE documents SET print_status = 'printing', device_id = $2, delivered_at = now() WHERE id = $1`,
-      [doc.id, deviceId],
-    ).catch(() => {})
+    if (await claim(query, doc.id, deviceId))
+      pushToDevice(deviceId, { type: 'job_new', job: buildOffer(doc) })
   }
 }
 
@@ -84,16 +108,15 @@ export async function offerPending(device) {
     const { rows } = await client.query(
       `SELECT d.* FROM documents d JOIN orders o ON o.id = d.order_id
        WHERE d.shop_id = $1 AND d.print_status = 'queued' AND o.status = 'paid'
-       ORDER BY d.created_at`,
+         AND o.reversed_at IS NULL
+       ORDER BY d.created_at
+       FOR UPDATE OF d SKIP LOCKED`,
       [device.shop_id],
     )
     const offers = []
     for (const doc of rows) {
-      await client.query(
-        `UPDATE documents SET print_status = 'printing', device_id = $2, delivered_at = now() WHERE id = $1`,
-        [doc.id, device.id],
-      )
-      offers.push(buildOffer(doc))
+      if (await claim((text, params) => client.query(text, params), doc.id, device.id))
+        offers.push(buildOffer(doc))
     }
     return offers
   })
@@ -169,17 +192,77 @@ export async function purgePrinted() {
 }
 
 /**
+ * Abandoned uploads. An order nobody paid for keeps its files for a day so the
+ * customer can still settle at the counter, then the documents and files go.
+ * The order row stays: owed totals are accounting, not storage. Jobs still in
+ * flight are left alone even if the counter flipped the order back to unpaid.
+ */
+export async function purgeAbandoned() {
+  const { rows } = await query(
+    `DELETE FROM documents d
+     USING orders o
+     WHERE o.id = d.order_id AND o.status = 'unpaid'
+       AND o.created_at < now() - ($1::int * interval '1 hour')
+       AND d.print_status NOT IN ('queued', 'printing')
+     RETURNING d.stored_path`,
+    [config.unpaidRetentionHours],
+  )
+  for (const row of rows) await deleteStored(row.stored_path)
+  return rows.length
+}
+
+/**
+ * Staged files no document row ever claimed: an upload that died mid-request
+ * (client disconnect, a crash between multer and the insert). Nothing references
+ * them, so once they are older than the grace window they are safe to remove.
+ */
+export async function purgeOrphanFiles() {
+  const { rows } = await query('SELECT stored_path FROM documents')
+  const claimed = new Set(rows.map((r) => path.basename(r.stored_path)))
+  const cutoff = Date.now() - config.orphanFileMinutes * 60_000
+  let removed = 0
+  for (const entry of await fs.promises.readdir(config.uploadDir, { withFileTypes: true })) {
+    if (!entry.isFile() || claimed.has(entry.name)) continue
+    const full = path.join(config.uploadDir, entry.name)
+    const stat = await fs.promises.stat(full).catch(() => null)
+    if (!stat || stat.mtimeMs > cutoff) continue
+    await deleteStored(full)
+    removed += 1
+  }
+  return removed
+}
+
+/**
  * A job offered to an agent that then went silent must not hang forever. If the
  * device is offline and the offer is old, return it to the queue for another
- * agent (or the same one when it reconnects).
+ * agent (or the same one when it reconnects) — up to MAX_DELIVERY_ATTEMPTS,
+ * after which it is failed so the counter decides whether to send it again.
+ *
+ * 'uncertain' is deliberately not swept: the agent could not tell whether the
+ * sheets came out, so re-offering it automatically is how a job prints twice.
+ * That one waits for a human Retry.
  */
 export async function requeueStale(isDeviceOnline) {
   const stale = await many(
-    `SELECT id, device_id FROM documents
+    `SELECT id, device_id, print_attempts FROM documents
      WHERE print_status = 'printing' AND delivered_at < now() - interval '5 minutes'`,
   )
   for (const doc of stale) {
     if (doc.device_id && isDeviceOnline(doc.device_id)) continue
-    await query(`UPDATE documents SET print_status = 'queued', device_id = NULL, delivered_at = NULL WHERE id = $1`, [doc.id])
+    if (doc.print_attempts >= MAX_DELIVERY_ATTEMPTS) {
+      await query(
+        `UPDATE documents
+         SET print_status = 'failed', device_id = NULL, finished_at = now(),
+             print_stage = 'gave-up', print_detail = $2
+         WHERE id = $1 AND print_status = 'printing'`,
+        [doc.id, `the agent stopped responding after ${doc.print_attempts} attempts — check the printer, then press Retry`],
+      )
+      continue
+    }
+    await query(
+      `UPDATE documents SET print_status = 'queued', device_id = NULL, delivered_at = NULL
+       WHERE id = $1 AND print_status = 'printing'`,
+      [doc.id],
+    )
   }
 }

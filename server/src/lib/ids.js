@@ -10,6 +10,8 @@ export const adminSessionId = () => hex(16)
 export const deviceId = () => `dev-${hex(6)}`
 export const pairingCodeId = () => `pc_${hex(6)}`
 export const fetchKey = () => hex(12)
+/** Unguessable stand-in for the sequential order id on public endpoints. */
+export const orderToken = () => hex(12)
 export const storedName = (ext) => `${hex(16)}${ext}`
 
 /** The long-lived device secret. Returned once at pairing, stored only as a hash. */

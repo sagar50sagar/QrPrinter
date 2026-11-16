@@ -4,6 +4,7 @@ import { deviceFromToken, bearerToken } from '../middleware/agentAuth.js'
 // Live agent sockets, keyed by device id. A shop may have more than one agent;
 // pushToShop reaches whichever are connected so a job moves immediately.
 const sockets = new Map()
+let reapTimer = null
 
 const send = (ws, frame) => {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame))
@@ -76,14 +77,25 @@ export function attachChannel(server) {
   })
 
   // Reap peers that stopped answering so a half-open socket does not look online.
-  const interval = setInterval(() => {
+  reapTimer = setInterval(() => {
     for (const ws of sockets.values()) {
       if (!ws.isAlive) { ws.terminate(); continue }
       ws.isAlive = false
       send(ws, { type: 'ping' })
     }
   }, 25_000)
-  interval.unref?.()
+  reapTimer.unref?.()
 
   return wss
+}
+
+/**
+ * Tell every live agent the server is going away and stop the reaper. Agents
+ * reconnect on their own; a clean close code lets them do it immediately instead
+ * of waiting for the ping timeout to notice a dead socket.
+ */
+export function shutdownChannels() {
+  if (reapTimer) clearInterval(reapTimer)
+  for (const ws of sockets.values()) ws.close(1001, 'server restarting')
+  sockets.clear()
 }

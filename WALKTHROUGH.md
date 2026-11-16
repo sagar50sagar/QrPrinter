@@ -451,6 +451,12 @@ This is a deliberate design point, not an accident:
   both the database row and the file on disk. The grace window lets the counter and the
   customer see "Printed" before it disappears. Change it with `PRINTED_RETENTION_MINUTES`
   in `server/.env` (default 10).
+- **An upload nobody pays for is kept for a day, then deleted** (documents and files).
+  The order row stays so the counter's owed totals remain honest. Change it with
+  `UNPAID_RETENTION_HOURS` (default 24).
+- **An upload that dies mid-request leaves no litter.** If any step refuses the order the
+  staged files are removed immediately, and a hourly sweep deletes any staged file older
+  than `ORPHAN_FILE_MINUTES` (default 60) that no document row claims.
 - **Accounting survives the deletion.** Each order keeps `document_count`,
   `printed_documents`, `printed_sheets` and `completed_at`, so daily totals and the
   customer's "x of y printed" stay correct after the files are gone.
@@ -488,6 +494,10 @@ This machine has no physical printer, and that is fine for proving the plumbing.
   a throwaway database with a script that speaks the agent's exact wire protocol. See
   Part L for what passed.
 
+- **The server's own repeatable suite:** `cd server && npm test` — 25 integration checks
+  in a throwaway schema and temp upload directory, safe to run against the live database
+  because it never touches it. See Part L.
+
 ---
 
 ## 12. Part J — Before you go live
@@ -519,13 +529,29 @@ depends on it:
   after a restore. Each shop adds a webhook at its own URL
   `https://your-domain/api/shop/<slug>/pay/webhook`, subscribed to `payment.captured` and
   `order.paid`. A print is marked paid only by that verified webhook. Until a shop connects
-  its keys, its customers pay cash at the counter as before.
+  its keys, its customers pay cash at the counter as before. In production
+  (`NODE_ENV=production`) the server **refuses to boot** without `PAYMENTS_ENC_KEY` or an
+  existing `server/var/payments.key`, because on an ephemeral host a generated key would
+  be lost on the next deploy and every saved shop key with it. Subscribe the shop webhook
+  to the refund and dispute events too (`refund.processed`, `payment.dispute.created`,
+  `payment.dispute.lost`, `payment.dispute.won`): a refunded or disputed print is reversed
+  and will not print, a won dispute restores it.
 - **Backups.** Back up the PostgreSQL database and `server/var/documents` (the latter
-  only holds files inside their 10-minute window). Test a restore.
-- **Hardening still open:** request rate limiting on auth/upload; the agent health probe
-  should be wrapped so a database blip cannot crash the process; order ids are sequential
-  and guessable on the public status endpoint (make them opaque); the live agent channel
-  is single-process (fine for one server, needs a shared bus to scale out).
+  holds printed files inside their 10-minute window and unpaid uploads inside their
+  24-hour one). Test a restore.
+- **Hardening now in place:** rate limits on signup, both logins, pairing, uploads and
+  payment starts; the public order status/pay endpoints take an unguessable token instead
+  of the sequential `J-…` id (the id stays the counter reference); the health probe and
+  every async route are wrapped, and an unhandled rejection shuts the server down cleanly
+  instead of dying mid-request; refunds and disputes reverse a print; every payment
+  transition is appended to `payment_log` with who did it.
+  **Still open:** the live agent channel is single-process (fine for one server, needs a
+  shared bus to scale out); real terms/privacy text and a code-signing certificate are
+  owner actions, not code.
+- **Production switches.** `NODE_ENV=production` binds `0.0.0.0`, requires an https
+  `PUBLIC_BASE_URL` and a durable payments key, and warns if platform Razorpay keys are
+  missing. Set `TRUST_PROXY=1` behind Railway's edge so rate limits see real customer IPs
+  instead of the proxy's. `server/.env.example` lists every variable with its default.
 - **Process supervision.** Run the server under a service manager (NSSM, systemd, a
   container orchestrator) so it restarts on failure, and keep PostgreSQL as a service.
 
@@ -609,6 +635,21 @@ single-press disconnect confirm), the customer **Pay online** button, the live f
 
 **Agent unit checks — 50 / 50 passed.** **Frontend build — green** (all four entries).
 **Server syntax — 29 files, 0 errors.**
+
+**Server integration suite — 25 / 25 checks, repeatable any time.** `cd server && npm test`
+provisions a throwaway schema (`qp_test_…`) in the same database plus a temp upload
+directory, runs the real migrations and the real HTTP app against them, and drops both at
+the end. The app role may create schemas but not databases, so no superuser password is
+needed and live shops, orders and files are never read or written. It covers: the opaque
+order token (sequential id refused, another shop's token refused) · payment gating ·
+the counter payment log with its actor · two agents racing for one job getting exactly
+one offer · the delivery-attempt cap, gave-up state and Retry · webhook amount-mismatch
+rejection · signed webhook paid, replay, refund reversal and dispute restore · refused
+uploads leaving no staged file · the capability document link · all three retention
+sweeps (printed, abandoned, orphan) · the per-email login rate limit · the health probe.
+The customer upload → status poll → counter reference flow was also driven in a real
+browser against a rebuilt frontend, and graceful shutdown was proven with a live agent
+websocket receiving close code 1001.
 
 **Not proven here:** that physical paper comes out or that a page renders correctly on a
 real device (no printer on this machine), duplex/colour/paper sizing against real

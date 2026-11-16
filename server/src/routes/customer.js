@@ -3,14 +3,15 @@ import multer from 'multer'
 import { Router } from 'express'
 import { config } from '../config.js'
 import { one, query, transaction } from '../db.js'
-import { documentId, orderId } from '../lib/ids.js'
+import { documentId, orderId, orderToken } from '../lib/ids.js'
 import { badRequest, forbidden, notFound, wrap } from '../lib/errors.js'
 import { entitlementFor } from '../lib/billing.js'
 import { bool, int, mode as validateMode, rupees, str } from '../lib/validate.js'
 import {
-  analyzeFile, contentTypeFor, extensionOf, newFetchKey, newStoredName,
+  analyzeFile, contentTypeFor, deleteStored, extensionOf, newFetchKey, newStoredName,
 } from '../services/documents.js'
 import { decryptSecret } from '../lib/crypto.js'
+import { rateLimit } from '../middleware/rateLimit.js'
 import { createShopOrder, verifySignatureWith } from '../services/razorpay.js'
 import { applyPaymentEvent } from '../services/shopPayments.js'
 
@@ -60,7 +61,10 @@ router.get('/:slug', loadShop, wrap(async (req, res) => {
   })
 }))
 
-router.post('/:slug/orders', loadShop, requireOpen, upload.array('files'), wrap(async (req, res) => {
+// The limiter runs before multer so a flood is refused before any byte is staged.
+router.post('/:slug/orders',
+  rateLimit({ name: 'upload', windowMs: 10 * 60_000, max: 30 }),
+  loadShop, requireOpen, upload.array('files'), wrap(async (req, res) => {
   const shop = req.targetShop
   const files = req.files || []
   if (files.length === 0) throw badRequest('add at least one document')
@@ -77,66 +81,81 @@ router.post('/:slug/orders', loadShop, requireOpen, upload.array('files'), wrap(
   const priceColor = shop.price_color_paise
   const prepared = []
   let amountPaise = 0
+  let created
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]
-    const item = items[i] || {}
-    const ext = extensionOf(file.originalname)
-    const contentType = contentTypeFor(ext)
-    const copies = int(item.copies, { field: 'copies', min: 1, max: 500, fallback: 1 })
-    const mode = validateMode(item.mode)
-    const duplex = bool(item.duplex)
-    const paper = str(item.paper, { field: 'paper', max: 20 }) || 'A4'
-    const pageRange = str(item.page_range, { field: 'page range', max: 40 }) || null
-    const { bytes, sha256, pages } = await analyzeFile(file.path, contentType)
-    const linePaise = pages * copies * (mode === 'color' ? priceColor : priceBw)
-    amountPaise += linePaise
-    prepared.push({
-      fileName: str(file.originalname, { field: 'file name', max: 200 }) || `document-${i + 1}${ext}`,
-      storedPath: file.path, contentType, bytes, sha256, pages, copies, mode, duplex, paper, pageRange, linePaise,
-    })
-  }
-
-  const created = await transaction(async (client) => {
-    const { rows: [seqRow] } = await client.query("SELECT nextval('order_seq') AS seq")
-    const id = orderId(seqRow.seq)
-    await client.query(
-      `INSERT INTO orders (id, shop_id, customer_name, customer_phone, note, method, status, amount_paise, document_count)
-       VALUES ($1, $2, $3, $4, $5, 'cash', 'unpaid', $6, $7)`,
-      [id, shop.id, customerName, customerPhone, note, amountPaise, prepared.length],
-    )
-    const documents = []
-    for (let i = 0; i < prepared.length; i++) {
-      const doc = prepared[i]
-      const docId = documentId(id, i + 1)
-      await client.query(
-        `INSERT INTO documents
-         (id, order_id, shop_id, file_name, stored_path, fetch_key, content_type, bytes, sha256,
-          pages, copies, mode, duplex, paper, page_range, print_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'pending')`,
-        [docId, id, shop.id, doc.fileName, doc.storedPath, newFetchKey(), doc.contentType, doc.bytes,
-         doc.sha256, doc.pages, doc.copies, doc.mode, doc.duplex, doc.paper, doc.pageRange],
-      )
-      documents.push({
-        id: docId, file: doc.fileName, pages: doc.pages, copies: doc.copies,
-        mode: doc.mode, amount: rupees(doc.linePaise),
+  // Multer has already staged every file. If any later step refuses the order
+  // (a bad setting, an unreadable PDF, a failed insert) the staged bytes would
+  // otherwise sit on disk forever with no row pointing at them.
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      const item = items[i] || {}
+      const ext = extensionOf(file.originalname)
+      const contentType = contentTypeFor(ext)
+      const copies = int(item.copies, { field: 'copies', min: 1, max: 500, fallback: 1 })
+      const mode = validateMode(item.mode)
+      const duplex = bool(item.duplex)
+      const paper = str(item.paper, { field: 'paper', max: 20 }) || 'A4'
+      const pageRange = str(item.page_range, { field: 'page range', max: 40 }) || null
+      const { bytes, sha256, pages } = await analyzeFile(file.path, contentType)
+      const linePaise = pages * copies * (mode === 'color' ? priceColor : priceBw)
+      amountPaise += linePaise
+      prepared.push({
+        fileName: str(file.originalname, { field: 'file name', max: 200 }) || `document-${i + 1}${ext}`,
+        storedPath: file.path, contentType, bytes, sha256, pages, copies, mode, duplex, paper, pageRange, linePaise,
       })
     }
-    return { id, documents }
-  })
+
+    created = await transaction(async (client) => {
+      const { rows: [seqRow] } = await client.query("SELECT nextval('order_seq') AS seq")
+      const id = orderId(seqRow.seq)
+      const token = orderToken()
+      await client.query(
+        `INSERT INTO orders (id, shop_id, public_token, customer_name, customer_phone, note, method, status, amount_paise, document_count)
+         VALUES ($1, $2, $3, $4, $5, $6, 'cash', 'unpaid', $7, $8)`,
+        [id, shop.id, token, customerName, customerPhone, note, amountPaise, prepared.length],
+      )
+      const documents = []
+      for (let i = 0; i < prepared.length; i++) {
+        const doc = prepared[i]
+        const docId = documentId(id, i + 1)
+        await client.query(
+          `INSERT INTO documents
+           (id, order_id, shop_id, file_name, stored_path, fetch_key, content_type, bytes, sha256,
+            pages, copies, mode, duplex, paper, page_range, print_status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'pending')`,
+          [docId, id, shop.id, doc.fileName, doc.storedPath, newFetchKey(), doc.contentType, doc.bytes,
+           doc.sha256, doc.pages, doc.copies, doc.mode, doc.duplex, doc.paper, doc.pageRange],
+        )
+        documents.push({
+          id: docId, file: doc.fileName, pages: doc.pages, copies: doc.copies,
+          mode: doc.mode, amount: rupees(doc.linePaise),
+        })
+      }
+      return { id, token, documents }
+    })
+  } catch (error) {
+    for (const file of files) await deleteStored(file.path)
+    throw error
+  }
 
   res.status(201).json({
-    ok: true, order_id: created.id, status: 'unpaid', method: 'cash',
+    ok: true, order_id: created.id, order_token: created.token, status: 'unpaid', method: 'cash',
     amount: rupees(amountPaise), customer_name: customerName,
     document_count: created.documents.length, printed_documents: 0,
     documents: created.documents,
   })
 }))
 
-router.get('/:slug/orders/:orderId', loadShop, wrap(async (req, res) => {
+/**
+ * Public order status. Addressed by the opaque token, never the sequential id:
+ * this endpoint has no session, so a guessable id would let anyone read the next
+ * customer's name, files and amount.
+ */
+router.get('/:slug/orders/:orderToken', loadShop, wrap(async (req, res) => {
   const order = await one(
-    'SELECT * FROM orders WHERE id = $1 AND shop_id = $2',
-    [req.params.orderId, req.targetShop.id],
+    'SELECT * FROM orders WHERE public_token = $1 AND shop_id = $2',
+    [req.params.orderToken, req.targetShop.id],
   )
   if (!order) throw notFound('no such order')
   const documents = await query(
@@ -145,7 +164,8 @@ router.get('/:slug/orders/:orderId', loadShop, wrap(async (req, res) => {
     [order.id],
   ).then((r) => r.rows)
   res.json({
-    ok: true, order_id: order.id, status: order.status, method: order.method,
+    ok: true, order_id: order.id, order_token: order.public_token,
+    status: order.status, method: order.method,
     amount: rupees(order.amount_paise), customer_name: order.customer_name,
     created_at: order.created_at,
     document_count: order.document_count, printed_documents: order.printed_documents,
@@ -163,11 +183,13 @@ router.get('/:slug/orders/:orderId', loadShop, wrap(async (req, res) => {
  * needs to open checkout. The order is NOT marked paid here — only the verified
  * webhook does that. The Razorpay order is reused on repeat clicks.
  */
-router.post('/:slug/orders/:orderId/pay', loadShop, wrap(async (req, res) => {
+router.post('/:slug/orders/:orderToken/pay',
+  rateLimit({ name: 'shop-pay', windowMs: 10 * 60_000, max: 20 }),
+  loadShop, wrap(async (req, res) => {
   const shop = req.targetShop
   if (shop.suspended_at || !entitlementFor(shop).entitled)
     throw forbidden('this shop is unavailable right now — please contact the counter')
-  const order = await one('SELECT * FROM orders WHERE id = $1 AND shop_id = $2', [req.params.orderId, shop.id])
+  const order = await one('SELECT * FROM orders WHERE public_token = $1 AND shop_id = $2', [req.params.orderToken, shop.id])
   if (!order) throw notFound('no such order')
   if (order.status === 'paid') throw badRequest('this order is already paid')
   if (!shop.rzp_key_id || !shop.rzp_key_secret_enc)

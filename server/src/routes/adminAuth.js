@@ -4,13 +4,19 @@ import { verifyPassword } from '../lib/passwords.js'
 import { email as validateEmail } from '../lib/validate.js'
 import { unauthorized, wrap } from '../lib/errors.js'
 import { createAdminSession, destroyAdminSession, requireAdmin } from '../middleware/adminSession.js'
+import { rateLimit } from '../middleware/rateLimit.js'
 
 const router = Router()
 
 const publicAdmin = (admin) => ({ id: admin.id, email: admin.email, display_name: admin.display_name })
 
-// No sign-up: admins are seeded with `npm run seed:admin`.
-router.post('/login', wrap(async (req, res) => {
+// No sign-up: admins are seeded with `npm run seed:admin`. The platform login is
+// the one account that can suspend every shop, so its buckets are tighter.
+const adminLoginWindow = { windowMs: 15 * 60_000 }
+router.post('/login',
+  rateLimit({ ...adminLoginWindow, name: 'admin-login-ip', max: 10 }),
+  rateLimit({ ...adminLoginWindow, name: 'admin-login-email', max: 5, key: (req) => String(req.body?.email || '').toLowerCase() }),
+  wrap(async (req, res) => {
   const email = validateEmail(req.body?.email)
   const password = typeof req.body?.password === 'string' ? req.body.password : ''
   const admin = await one('SELECT * FROM admins WHERE email = $1', [email])

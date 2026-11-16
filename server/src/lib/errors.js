@@ -12,6 +12,7 @@ export const unauthorized = (message = 'sign in to continue') => new ApiError(40
 export const forbidden = (message, code) => new ApiError(403, message, code)
 export const notFound = (message = 'not found') => new ApiError(404, message)
 export const conflict = (message) => new ApiError(409, message)
+export const tooManyRequests = (message = 'too many attempts — please wait a moment and try again') => new ApiError(429, message)
 
 /** Wrap an async route so a thrown ApiError becomes a JSON response. */
 export const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)

@@ -83,18 +83,20 @@ export default function CustomerApp() {
     return () => { alive = false }
   }, [slug])
 
-  // Once an order exists, keep its payment and print status fresh.
+  // Once an order exists, keep its payment and print status fresh. The poll uses
+  // the opaque token, not the counter reference, and the response carries the
+  // token back so replacing the order object does not break the next tick.
   useEffect(() => {
-    if (!order?.order_id) return undefined
+    if (!order?.order_token) return undefined
     let alive = true
     const tick = () =>
-      fetch(`/api/shop/${encodeURIComponent(slug)}/orders/${encodeURIComponent(order.order_id)}`)
+      fetch(`/api/shop/${encodeURIComponent(slug)}/orders/${encodeURIComponent(order.order_token)}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((body) => { if (alive && body?.ok) setOrder(body) })
         .catch(() => {})
     const timer = setInterval(tick, 4000)
     return () => { alive = false; clearInterval(timer) }
-  }, [order?.order_id, slug])
+  }, [order?.order_token, slug])
 
   const addFiles = useCallback((list) => {
     const added = Array.from(list).map((file) => ({
@@ -137,10 +139,10 @@ export default function CustomerApp() {
   }
 
   const payOnline = async () => {
-    if (!order?.order_id) return
+    if (!order?.order_token) return
     setPaying(true); setPayError(''); setPayNotice('')
     try {
-      const res = await fetch(`/api/shop/${encodeURIComponent(slug)}/orders/${encodeURIComponent(order.order_id)}/pay`, { method: 'POST' })
+      const res = await fetch(`/api/shop/${encodeURIComponent(slug)}/orders/${encodeURIComponent(order.order_token)}/pay`, { method: 'POST' })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || 'The payment could not be started.')
       await loadRazorpay()

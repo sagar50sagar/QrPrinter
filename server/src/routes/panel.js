@@ -1,11 +1,12 @@
 import { Router } from 'express'
 import { config } from '../config.js'
-import { many, one, query } from '../db.js'
+import { many, one, query, transaction } from '../db.js'
 import { pairingCode, pairingCodeId } from '../lib/ids.js'
 import { badRequest, wrap } from '../lib/errors.js'
 import { bool, int, paise, rupees, str } from '../lib/validate.js'
 import { encryptSecret } from '../lib/crypto.js'
 import { requireEntitled, requireSession } from '../middleware/session.js'
+import { perMinute } from '../middleware/rateLimit.js'
 import { enqueue } from '../services/queue.js'
 import { isOnline } from '../services/channels.js'
 import { qrPng, qrSvg, shopLink } from '../services/qr.js'
@@ -26,7 +27,8 @@ const settingsOf = (shop) => ({
 router.get('/state', wrap(async (req, res) => {
   const shop = req.shop
   const rows = await many(
-    `SELECT d.*, o.customer_name, o.method, o.status AS order_status, o.created_at AS order_at
+    `SELECT d.*, o.customer_name, o.method, o.status AS order_status, o.created_at AS order_at,
+            o.reversed_at AS order_reversed_at
      FROM documents d JOIN orders o ON o.id = d.order_id
      WHERE d.shop_id = $1
      ORDER BY o.created_at DESC, d.id`,
@@ -35,7 +37,8 @@ router.get('/state', wrap(async (req, res) => {
   const jobs = rows.map((d) => ({
     id: d.id, order_id: d.order_id, name: d.customer_name, file: d.file_name,
     pages: d.pages, copies: d.copies, mode: d.mode,
-    paid: d.order_status === 'paid', method: d.method, at: d.order_at,
+    paid: d.order_status === 'paid', reversed: Boolean(d.order_reversed_at),
+    method: d.method, at: d.order_at,
     print_status: d.print_status, printer: d.printer_name || '', error: d.print_detail || '',
     acceptedAt: d.delivered_at, finishedAt: d.finished_at,
   }))
@@ -68,9 +71,11 @@ router.get('/state', wrap(async (req, res) => {
     `SELECT
        coalesce(sum(printed_documents), 0)::int AS prints_today,
        coalesce(sum(printed_sheets), 0)::int AS sheets_today,
-       coalesce(sum(amount_paise) FILTER (WHERE status = 'paid'), 0)::bigint AS collected_paise,
-       coalesce(sum(amount_paise) FILTER (WHERE status = 'paid' AND method = 'cash'), 0)::bigint AS cash_paise,
-       coalesce(sum(amount_paise) FILTER (WHERE status = 'paid' AND method = 'online'), 0)::bigint AS online_paise,
+       coalesce(sum(amount_paise) FILTER (WHERE status = 'paid' AND reversed_at IS NULL), 0)::bigint AS collected_paise,
+       coalesce(sum(amount_paise) FILTER (WHERE status = 'paid' AND reversed_at IS NULL AND method = 'cash'), 0)::bigint AS cash_paise,
+       coalesce(sum(amount_paise) FILTER (WHERE status = 'paid' AND reversed_at IS NULL AND method = 'online'), 0)::bigint AS online_paise,
+       coalesce(sum(amount_paise) FILTER (WHERE status = 'paid' AND reversed_at IS NOT NULL), 0)::bigint AS reversed_paise,
+       count(*) FILTER (WHERE status = 'paid' AND reversed_at IS NOT NULL)::int AS reversed_count,
        coalesce(sum(amount_paise) FILTER (WHERE status = 'unpaid'), 0)::bigint AS owed_paise,
        count(*) FILTER (WHERE status = 'unpaid')::int AS owed_count
      FROM orders
@@ -83,6 +88,8 @@ router.get('/state', wrap(async (req, res) => {
     collected: rupees(today.collected_paise),
     cash: rupees(today.cash_paise),
     online: rupees(today.online_paise),
+    reversed: rupees(today.reversed_paise),
+    reversedCount: today.reversed_count,
     owed: rupees(today.owed_paise),
     owedCount: today.owed_count,
     readyPrinters: printerList.filter((p) => p.state === 'ready').length,
@@ -106,17 +113,39 @@ router.get('/state', wrap(async (req, res) => {
   })
 }))
 
-/** Mark the orders behind these documents paid or unpaid (cash counter action). */
-router.post('/pay', wrap(async (req, res) => {
+/**
+ * Mark the orders behind these documents paid or unpaid (cash counter action).
+ * Every transition is appended to payment_log with the signed-in user, so a
+ * batch of "paid" with no money in the drawer can be attributed after the fact.
+ */
+router.post('/pay', perMinute('counter-pay', 60, (req) => req.user.id), wrap(async (req, res) => {
   const jobIds = Array.isArray(req.body?.jobIds) ? req.body.jobIds.map(String) : []
   const paid = bool(req.body?.paid)
   if (jobIds.length === 0) throw badRequest('choose at least one job')
-  const result = await query(
-    `UPDATE orders SET status = $2, paid_at = $3
-     WHERE shop_id = $1 AND id IN (SELECT order_id FROM documents WHERE id = ANY($4::text[]))`,
-    [req.shop.id, paid ? 'paid' : 'unpaid', paid ? new Date() : null, jobIds],
-  )
-  res.json({ ok: true, updated: result.rowCount })
+  const target = paid ? 'paid' : 'unpaid'
+  const actor = `counter:${req.user.id}`
+  const updated = await transaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT o.id, o.method, o.amount_paise
+       FROM orders o
+       WHERE o.shop_id = $1 AND o.status <> $3
+         AND o.id IN (SELECT order_id FROM documents WHERE id = ANY($2::text[]))
+       FOR UPDATE OF o`,
+      [req.shop.id, jobIds, target],
+    )
+    for (const order of rows) {
+      await client.query('UPDATE orders SET status = $2, paid_at = $3 WHERE id = $1',
+        [order.id, target, paid ? new Date() : null])
+      await client.query(
+        `INSERT INTO payment_log (shop_id, order_id, event, method, amount_paise, actor, detail)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [req.shop.id, order.id, target, order.method, order.amount_paise, actor,
+          paid ? 'marked paid at the counter' : 'marked unpaid at the counter'],
+      )
+    }
+    return rows.length
+  })
+  res.json({ ok: true, updated })
 }))
 
 router.post('/print', requireEntitled, wrap(async (req, res) => {
@@ -192,7 +221,7 @@ router.delete('/online-payments', wrap(async (req, res) => {
 }))
 
 /** Mint a single-use, short-lived pairing code for this shop. */
-router.post('/pairing-code', wrap(async (req, res) => {
+router.post('/pairing-code', perMinute('pairing-code', 10, (req) => req.shop.id), wrap(async (req, res) => {
   let code = pairingCode()
   for (let i = 0; i < 5 && await one('SELECT 1 FROM pairing_codes WHERE code=$1 AND used_at IS NULL', [code]); i++)
     code = pairingCode()

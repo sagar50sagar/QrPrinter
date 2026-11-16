@@ -4,7 +4,7 @@ import express from 'express'
 import cookieParser from 'cookie-parser'
 import { config, serverRoot } from './config.js'
 import { query } from './db.js'
-import { errorHandler } from './lib/errors.js'
+import { errorHandler, wrap } from './lib/errors.js'
 import authRouter from './routes/auth.js'
 import customerRouter, { shopPaymentWebhookHandler } from './routes/customer.js'
 import panelRouter from './routes/panel.js'
@@ -17,6 +17,9 @@ import billingRouter, { billingWebhookHandler } from './routes/billing.js'
 export function createApp() {
   const app = express()
   app.disable('x-powered-by')
+  // Rate limits key on req.ip; behind a proxy that is only the real client when
+  // the configured number of hops is trusted.
+  app.set('trust proxy', config.trustProxy)
   app.use(cookieParser())
   // Razorpay's webhooks are verified against the exact raw bytes, so they are
   // parsed and mounted before the global JSON parser (which would consume the
@@ -26,11 +29,12 @@ export function createApp() {
   // JSON bodies (agent, panel, auth) are small; uploads go through multer.
   app.use(express.json({ limit: '1mb' }))
 
-  // The agent's doctor probes this before pairing.
-  app.get('/api/agent/health', async (req, res) => {
+  // The agent's doctor probes this before pairing. Wrapped like every other
+  // async handler: an unwrapped rejection here would take the whole process down.
+  app.get('/api/agent/health', wrap(async (req, res) => {
     const { rows } = await query('SELECT count(*)::int AS devices FROM devices WHERE revoked_at IS NULL')
     res.json({ ok: true, name: 'QrPrinter', devices: rows[0].devices })
-  })
+  }))
 
   app.use('/api/auth', authRouter)
   app.use('/api/shop', customerRouter)
